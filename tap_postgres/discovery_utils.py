@@ -45,8 +45,7 @@ def discover_db(connection, filter_schemas=None, tables: Optional[List[str]] = N
     Discover streams in the DB cluster
     """
     table_info = produce_table_info(connection, filter_schemas, tables)
-    db_streams = discover_columns(connection, table_info)
-    return db_streams
+    return discover_columns(connection, table_info)
 
 
 def produce_table_info(conn, filter_schemas=None, tables: Optional[List[str]] = None):
@@ -160,7 +159,7 @@ def discover_columns(connection, table_info):
 
             schema = include_array_schemas(columns, schema)
 
-            for c_name in column_schemas.keys():
+            for c_name in column_schemas:
                 mdata = write_sql_data_type_md(mdata, columns[c_name])
 
                 if column_schemas[c_name].get('type') is None:
@@ -315,7 +314,7 @@ def schema_for_column(col_info):
         scale = post_db.numeric_scale(col_info)
         precision = post_db.numeric_precision(col_info)
         schema_name = schema_name_for_numeric_array(precision, scale)
-        column_schema['items'] = {'$ref': '#/definitions/{}'.format(schema_name)}
+        column_schema['items'] = {'$ref': f'#/definitions/{schema_name}'}
     elif col_info.sql_data_type == 'double precision[]':
         column_schema['items'] = {'$ref': '#/definitions/sdc_recursive_number_array'}
     elif col_info.sql_data_type == 'hstore[]':
@@ -352,20 +351,15 @@ def schema_for_column(col_info):
 
 # pylint: disable=invalid-name,missing-function-docstring
 def nullable_columns(col_types, pk):
-    if pk:
-        return col_types
-    return ['null'] + col_types
+    return col_types if pk else ['null'] + col_types
 
 
 def nullable_column(col_type, pk):
-    if pk:
-        return [col_type]
-    return ['null', col_type]
+    return [col_type] if pk else ['null', col_type]
 
 
 def schema_name_for_numeric_array(precision, scale):
-    schema_name = 'sdc_recursive_decimal_{}_{}_array'.format(precision, scale)
-    return schema_name
+    return f'sdc_recursive_decimal_{precision}_{scale}_array'
 
 
 def include_array_schemas(columns, schema):
@@ -376,13 +370,16 @@ def include_array_schemas(columns, schema):
         scale = post_db.numeric_scale(columns[col])
         precision = post_db.numeric_precision(columns[col])
         schema_name = schema_name_for_numeric_array(precision, scale)
-        schema['definitions'][schema_name] = {'type': ['null', 'number', 'array'],
-                                              'multipleOf': post_db.numeric_multiple_of(scale),
-                                              'exclusiveMaximum': True,
-                                              'maximum': post_db.numeric_max(precision, scale),
-                                              'exclusiveMinimum': True,
-                                              'minimum': post_db.numeric_min(precision, scale),
-                                              'items': {'$ref': '#/definitions/{}'.format(schema_name)}}
+        schema['definitions'][schema_name] = {
+            'type': ['null', 'number', 'array'],
+            'multipleOf': post_db.numeric_multiple_of(scale),
+            'exclusiveMaximum': True,
+            'maximum': post_db.numeric_max(precision, scale),
+            'exclusiveMinimum': True,
+            'minimum': post_db.numeric_min(precision, scale),
+            'items': {'$ref': f'#/definitions/{schema_name}'},
+        }
+
 
     return schema
 
@@ -390,8 +387,13 @@ def include_array_schemas(columns, schema):
 def write_sql_data_type_md(mdata, col_info):
     c_name = col_info.column_name
     if col_info.sql_data_type == 'bit' and col_info.character_maximum_length > 1:
-        mdata = metadata.write(mdata, ('properties', c_name),
-                               'sql-datatype', "bit({})".format(col_info.character_maximum_length))
+        mdata = metadata.write(
+            mdata,
+            ('properties', c_name),
+            'sql-datatype',
+            f"bit({col_info.character_maximum_length})",
+        )
+
     else:
         mdata = metadata.write(mdata, ('properties', c_name), 'sql-datatype', col_info.sql_data_type)
 

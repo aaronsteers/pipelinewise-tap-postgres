@@ -48,8 +48,7 @@ def lsn_to_int(lsn):
         return None
 
     file, index = lsn.split('/')
-    lsni = (int(file, 16) << 32) + int(index, 16)
-    return lsni
+    return (int(file, 16) << 32) + int(index, 16)
 
 
 def int_to_lsn(lsni):
@@ -62,16 +61,10 @@ def int_to_lsn(lsni):
     lsnb = '{0:b}'.format(lsni)
 
     # file is the binary before the 32nd character, converted to hex
-    if len(lsnb) > 32:
-        file = (format(int(lsnb[:-32], 2), 'x')).upper()
-    else:
-        file = '0'
-
+    file = (format(int(lsnb[:-32], 2), 'x')).upper() if len(lsnb) > 32 else '0'
     # index is the binary from the 32nd character, converted to hex
     index = (format(int(lsnb[-32:], 2), 'x')).upper()
-    # Formatting
-    lsn = "{}/{}".format(file, index)
-    return lsn
+    return f"{file}/{index}"
 
 
 # pylint: disable=chained-comparison
@@ -122,7 +115,7 @@ def get_stream_version(tap_stream_id, state):
     stream_version = singer.get_bookmark(state, tap_stream_id, 'version')
 
     if stream_version is None:
-        raise Exception("version not found for log miner {}".format(tap_stream_id))
+        raise Exception(f"version not found for log miner {tap_stream_id}")
 
     return stream_version
 
@@ -142,8 +135,7 @@ def create_hstore_elem(conn_info, elem):
             query = create_hstore_elem_query(elem)
             cur.execute(query)
             res = cur.fetchone()[0]
-            hstore_elem = reduce(tuples_to_map, [res[i:i + 2] for i in range(0, len(res), 2)], {})
-            return hstore_elem
+            return reduce(tuples_to_map, [res[i:i + 2] for i in range(0, len(res), 2)], {})
 
 
 def create_array_elem(elem, sql_datatype, conn_info):
@@ -199,10 +191,9 @@ def create_array_elem(elem, sql_datatype, conn_info):
                 # custom datatypes like enums
                 cast_datatype = 'text[]'
 
-            sql_stmt = """SELECT $stitch_quote${}$stitch_quote$::{}""".format(elem, cast_datatype)
+            sql_stmt = f"""SELECT $stitch_quote${elem}$stitch_quote$::{cast_datatype}"""
             cur.execute(sql_stmt)
-            res = cur.fetchone()[0]
-            return res
+            return cur.fetchone()[0]
 
 
 # pylint: disable=too-many-branches,too-many-nested-blocks,too-many-return-statements
@@ -225,7 +216,7 @@ def selected_value_to_singer_value_impl(elem, og_sql_datatype, conn_info):
             if elem > datetime.datetime(9999, 12, 31, 23, 59, 59, 999000):
                 return FALLBACK_DATETIME
 
-            return elem.isoformat() + '+00:00'
+            return f'{elem.isoformat()}+00:00'
 
         with warnings.catch_warnings():
             # we need to catch and handle this warning
@@ -244,7 +235,7 @@ def selected_value_to_singer_value_impl(elem, og_sql_datatype, conn_info):
                 if parsed > datetime.datetime(9999, 12, 31, 23, 59, 59, 999000):
                     return FALLBACK_DATETIME
 
-                return parsed.isoformat() + '+00:00'
+                return f'{parsed.isoformat()}+00:00'
             except (ParserError, UnknownTimezoneWarning):
                 return FALLBACK_DATETIME
 
@@ -286,15 +277,15 @@ def selected_value_to_singer_value_impl(elem, og_sql_datatype, conn_info):
     if sql_datatype == 'date':
         if isinstance(elem, datetime.date):
             # logical replication gives us dates as strings UNLESS they from an array
-            return elem.isoformat() + 'T00:00:00+00:00'
-        return parse(elem).isoformat() + "+00:00"
+            return f'{elem.isoformat()}T00:00:00+00:00'
+        return f"{parse(elem).isoformat()}+00:00"
     if sql_datatype == 'time with time zone':
         # time with time zone values will be converted to UTC and time zone dropped
         # Replace hour=24 with hour=0
         if elem.startswith('24'):
             elem = elem.replace('24', '00', 1)
         # convert to UTC
-        elem = elem + '00'
+        elem = f'{elem}00'
         elem_obj = datetime.datetime.strptime(elem, '%H:%M:%S%z')
         if elem_obj.utcoffset() != datetime.timedelta(seconds=0):
             LOGGER.warning('time with time zone values are converted to UTC: %s', og_sql_datatype)
@@ -324,7 +315,7 @@ def selected_value_to_singer_value_impl(elem, og_sql_datatype, conn_info):
     if isinstance(elem, str):
         return elem
 
-    raise Exception("do not know how to marshall value of type {}".format(elem.__class__))
+    raise Exception(f"do not know how to marshall value of type {elem.__class__}")
 
 
 def selected_array_to_singer_value(elem, sql_datatype, conn_info):
@@ -354,7 +345,7 @@ def row_to_singer_message(stream, row, version, columns, time_extracted, md_map,
 
         if not sql_datatype:
             LOGGER.info("No sql-datatype found for stream %s: %s", stream, columns[idx])
-            raise Exception("Unable to find sql-datatype for stream {}".format(stream))
+            raise Exception(f"Unable to find sql-datatype for stream {stream}")
 
         cleaned_elem = selected_value_to_singer_value(elem, sql_datatype, conn_info)
         row_to_persist += (cleaned_elem,)
@@ -387,7 +378,10 @@ def consume_message(streams, state, msg, time_extracted, conn_info):
     target_stream = streams_lookup[tap_stream_id]
 
     if payload['kind'] not in {'insert', 'update', 'delete'}:
-        raise UnsupportedPayloadKindError("unrecognized replication operation: {}".format(payload['kind']))
+        raise UnsupportedPayloadKindError(
+            f"unrecognized replication operation: {payload['kind']}"
+        )
+
 
     # Get the additional fields in payload that are not in schema properties:
     # only inserts and updates have the list of columns that can be used to detect any different in columns
@@ -477,12 +471,7 @@ def generate_replication_slot_name(dbname, tap_id=None, prefix='pipelinewise'):
     :rtype: str
     """
     # Add tap_id to the end of the slot name if provided
-    if tap_id:
-        tap_id = f'_{tap_id}'
-    # Convert None to empty string
-    else:
-        tap_id = ''
-
+    tap_id = f'_{tap_id}' if tap_id else ''
     slot_name = f'{prefix}_{dbname}{tap_id}'.lower()
 
     # Replace invalid characters to ensure replication slot name is in accordance with Postgres spec
@@ -545,7 +534,11 @@ def streams_to_wal2json_tables(streams):
 
 def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
     state_comitted = state
-    lsn_comitted = min([get_bookmark(state_comitted, s['tap_stream_id'], 'lsn') for s in logical_streams])
+    lsn_comitted = min(
+        get_bookmark(state_comitted, s['tap_stream_id'], 'lsn')
+        for s in logical_streams
+    )
+
     start_lsn = lsn_comitted
     lsn_to_flush = None
     time_extracted = utils.now()
@@ -574,7 +567,7 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
     if version >= 120000:
         wal_sender_timeout = 10800000  # 10800000ms = 3 hours
         LOGGER.info('Set session wal_sender_timeout = %i milliseconds', wal_sender_timeout)
-        cur.execute("SET SESSION wal_sender_timeout = {}".format(wal_sender_timeout))
+        cur.execute(f"SET SESSION wal_sender_timeout = {wal_sender_timeout}")
 
     try:
         LOGGER.info('Request wal streaming from %s to %s (slot %s)',
@@ -592,7 +585,10 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                               })
 
     except psycopg2.ProgrammingError as ex:
-        raise Exception("Unable to start replication with logical replication (slot {})".format(ex)) from ex
+        raise Exception(
+            f"Unable to start replication with logical replication (slot {ex})"
+        ) from ex
+
 
     lsn_received_timestamp = datetime.datetime.utcnow()
     poll_timestamp = datetime.datetime.utcnow()
@@ -666,8 +662,11 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                     LOGGER.debug('Unable to open and parse %s', state_file)
                 finally:
                     lsn_comitted = min(
-                        [get_bookmark(state_comitted, s['tap_stream_id'], 'lsn') for s in logical_streams])
-                    if (lsn_currently_processing > lsn_comitted) and (lsn_comitted > lsn_to_flush):
+                        get_bookmark(state_comitted, s['tap_stream_id'], 'lsn')
+                        for s in logical_streams
+                    )
+
+                    if lsn_currently_processing > lsn_comitted > lsn_to_flush:
                         lsn_to_flush = lsn_comitted
                         LOGGER.info('Confirming write up to %s, flush to %s',
                                     int_to_lsn(lsn_to_flush),
