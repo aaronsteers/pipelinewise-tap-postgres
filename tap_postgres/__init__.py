@@ -74,10 +74,15 @@ def do_sync_incremental(conn_config, stream, state, desired_columns, md_map):
                 replication_key)
 
     stream_state = state.get('bookmarks', {}).get(stream['tap_stream_id'])
-    illegal_bk_keys = set(stream_state.keys()).difference(
-        {'replication_key', 'replication_key_value', 'version', 'last_replication_method'})
-    if len(illegal_bk_keys) != 0:
-        raise Exception("invalid keys found in state: {}".format(illegal_bk_keys))
+    if illegal_bk_keys := set(stream_state.keys()).difference(
+        {
+            'replication_key',
+            'replication_key_value',
+            'version',
+            'last_replication_method',
+        }
+    ):
+        raise Exception(f"invalid keys found in state: {illegal_bk_keys}")
 
     state = singer.write_bookmark(state, stream['tap_stream_id'], 'replication_key', replication_key)
 
@@ -103,14 +108,14 @@ def sync_method_for_streams(streams, state, default_replication_method):
         state = clear_state_on_replication_change(state, stream['tap_stream_id'], replication_key, replication_method)
 
         if replication_method not in {'LOG_BASED', 'FULL_TABLE', 'INCREMENTAL'}:
-            raise Exception("Unrecognized replication_method {}".format(replication_method))
+            raise Exception(f"Unrecognized replication_method {replication_method}")
 
         md_map = metadata.to_map(stream['metadata'])
         desired_columns = [c for c in stream['schema']['properties'].keys() if
                            sync_common.should_sync_column(md_map, c)]
         desired_columns.sort()
 
-        if len(desired_columns) == 0:
+        if not desired_columns:
             LOGGER.warning('There are no columns selected for stream %s, skipping it', stream['tap_stream_id'])
             continue
 
@@ -160,7 +165,7 @@ def sync_traditional_stream(conn_config, stream, state, sync_method, end_lsn):
     desired_columns = [c for c in stream['schema']['properties'].keys() if sync_common.should_sync_column(md_map, c)]
     desired_columns.sort()
 
-    if len(desired_columns) == 0:
+    if not desired_columns:
         LOGGER.warning('There are no columns selected for stream %s, skipping it', stream['tap_stream_id'])
         return state
 
@@ -186,7 +191,10 @@ def sync_traditional_stream(conn_config, stream, state, sync_method, end_lsn):
         sync_common.send_schema_message(stream, [])
         state = full_table.sync_table(conn_config, stream, state, desired_columns, md_map)
     else:
-        raise Exception("unknown sync method {} for stream {}".format(sync_method, stream['tap_stream_id']))
+        raise Exception(
+            f"unknown sync method {sync_method} for stream {stream['tap_stream_id']}"
+        )
+
 
     state = singer.set_currently_syncing(state, None)
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
@@ -206,10 +214,7 @@ def sync_logical_streams(conn_config, logical_streams, state, end_lsn, state_fil
 
         # Remove LOG_BASED stream bookmarks from state if it has been de-selected
         # This is to avoid sending very old starting and flushing positions to source
-        selected_streams = set()
-        for stream in logical_streams:
-            selected_streams.add("{}".format(stream['tap_stream_id']))
-
+        selected_streams = {f"{stream['tap_stream_id']}" for stream in logical_streams}
         new_state = dict(currently_syncing=state['currently_syncing'], bookmarks={})
 
         for stream, bookmark in state['bookmarks'].items():
@@ -230,8 +235,7 @@ def register_type_adapters(conn_config):
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             # citext[]
             cur.execute("SELECT typarray FROM pg_type where typname = 'citext'")
-            citext_array_oid = cur.fetchone()
-            if citext_array_oid:
+            if citext_array_oid := cur.fetchone():
                 psycopg2.extensions.register_type(
                     psycopg2.extensions.new_array_type(
                         (citext_array_oid[0],), 'CITEXT[]', psycopg2.STRING))
@@ -268,7 +272,9 @@ def register_type_adapters(conn_config):
                 enum_oid = oid[0]
                 psycopg2.extensions.register_type(
                     psycopg2.extensions.new_array_type(
-                        (enum_oid,), 'ENUM_{}[]'.format(enum_oid), psycopg2.STRING))
+                        (enum_oid,), f'ENUM_{enum_oid}[]', psycopg2.STRING
+                    )
+                )
 
 
 def do_sync(conn_config, catalog, default_replication_method, state, state_file=None):

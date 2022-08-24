@@ -27,10 +27,7 @@ class PostgresCurReplicationSlotMock:
 
     def fetchall(self):
         """Return the replication slot name as a List if the slot exists."""
-        if self.replication_slot_found:
-            return [self.existing_slot_name]
-
-        return []
+        return [self.existing_slot_name] if self.replication_slot_found else []
 
 
 class TestLogicalReplication(unittest.TestCase):
